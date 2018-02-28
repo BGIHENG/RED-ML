@@ -7,42 +7,46 @@ my $usage=<<USAGE;
 
      Description:
 
-         This program is used to identify RNA editing sites based on machine learning.  All of the programs were located in directory of bin when the software package was decompressed. The software package could only run on linux platform currently and the main program is red_ML.pl.
+        RED-ML is a software tool to do genome-wide RNA editing dectection (RED) based on RNA-seq data. All source codes and executables are located in the "bin" directory. The tool can be run on a Linux platform and the main program is red_ML.pl.
     
     Parameters:
         
-        --rnabam       [STR] the RNA alignment file which is used to calling RNA editing sites.
-        --reference    [STR] the genome fasta file(hg19.fa).
-        --dbsnp        [STR] SNP database, eg dbsnp138.
-        --simpleRepeat [STR] genome simple repeat region annotation file, should be bed format.
-        --alu          [STR] genome alu region annotation file, should be bed format.
-        --snplist      [STR] a file included konwn SNP sites, the first two column should be chromosome, position and seperated by Tab, it could be used to remove SNP [optional].
+        --rnabam       [STR] the sorted BAM file obtained from RNA-seq to detect RNA editing sites.
+        --reference    [STR] the fasta file containing the reference genome, e.g., hg19.fa.
+        --dbsnp        [STR] the SNP database file, e.g., dbSNP138.
+        --simpleRepeat [STR] genome-wide simple repeat annotation, should be in BED format.
+        --alu          [STR] genome-wide Alu repeat annotation, should be in BED format.
+        --snplist      [STR] a tab-delimited file listing known SNPs, with the first two columns being chromosome and position of each SNP [optional].
         --outdir       [STR] the directory of output.
-        --p            [NUM] a number between 0 and 1 [default 0.5]; 
-        --help         [STR] show this information!
+        --p            [NUM] the detection threshold, a number between 0 and 1 [default 0.5];
+        --help         [STR] show this help information!
     
     Example:
+    
         perl $0 --rnabam in.bam --reference hg19.fa --dbsnp dbsnp138.vcf --simpleRepeat hg19_simpleRepeat.reg.bed --alu hg19.alu.bed --snplist snp.list --outdir outdir
      
     Requirements:
 
         Before running this program, several pieces of database are needed.
+        The reference genome (hg19), downloaded from: http://hgdownload.soe.ucsc.edu/goldenPath/hg19/chromosomes.
         dbSNP138, downloaded from:http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database.
-        simpleRepeat, downloaded from http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database.
+        simpleRepeat, downloaded from http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database, and then do:
         awk '{print \$2"\\t"\$3"\\t"\$4}' simpleRepeat.txt > simpleRepeat.bed
         bedtools merge -i simpleRepeat.bed > simpleRepeat.merge.bed
-        Alu, downloaded from http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database.
+        Alu, downloaded from http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database, and then do:
         grep Alu rmsk.txt | awk '{print \$6"\\t"\$7"\\t"\$8}' > hg19.alu.bed
+        We have also provided the simpleRepeat and Alu files under the "database" directory for the user's convenience.
 
     Outputs:
  
-        When the program running completed, three files would be produced in the output directory.
-        RNA_editing.sites.txt is the all reliable RNA editing sites file;
-        variation.sites.feature.txt is the all varitaion sites file which contain feature values;
-        mut.txt.gz is the all varitaion sites file which contain pileup information;
-
+        When the program finishes running, three files will be created in the output directory. 
+        RNA_editing.sites.txt lists all detected RNA editing sites that pass the detection threshold p;
+        variation.sites.feature.txt lists all variant sites with associated feature values; 
+        mut.txt.gz contains all variant sites with pileup information.
+    
     Notice:
-        The input bam should be indexed, you could use samtools to create index.
+    
+        The input bam should be sorted (indexed), you could use samtools to create index.
         samtools index in.bam
 
 USAGE
@@ -150,6 +154,9 @@ my $first = <IN>;
 chomp  $first;
 open OUT1, ">$outdir/variation.sites.feature.txt" or die $!;
 open OUT2, ">$outdir/RNA_editing.sites.txt" or die $!;
+print OUT1 "#Pos\tVariation\tFrequency\tmfre\tQuality\tBino\tRef_end\tRef_mid\tAlt_end\tend_c\tAlt_mid\tend_p\tEndratio\tRef_minus\tRef_plus\tAlt_minus\tAlt_plus\tsb_c\tStrandbias_p\tStrandbiasratio\tHomolen\tSimplerepeat\tLeftvalue\tRightvalue\tAG\tAlu\tmotif\tDBSNP\thighfre"."\n";
+print OUT2 "#P_edit: The probability of being a RNA editing site predicted by RED-ML\n";
+print OUT2 "#Chromosome\tPosition\tRead_depth\tReference\tReference_support_reads\tAlternative\tAlternative_support_reads\tP_edit\n";
 while (<IN>){
     chomp;
     my ($var_reads,$fre,$mfre,$bqua,$bino,$ref_end,$ref_mid,$alt_end,$end_c,$alt_mid,$end_p,$endratio,$ref_minus,$ref_plus,$alt_minus,$alt_plus,$sb_c,$strandbias_p,$strandbiasratio,$homolen,$sr,$leftvalue,$rightvalue,$AG,$alu,$motif,$snpvalue,$alt_end_f,$sb_f,$lowfre,$highfre);
@@ -158,7 +165,7 @@ while (<IN>){
     my $pos = $a[0]."_".$a[1];
     $var_reads = log($a[13])/log(10);
     $fre = sprintf "%0.3f",($a[13]/$a[2]);
-    if ($fre==1){$highfre=1;}
+    if ($fre>=0.95){$highfre=1;}
     else {$highfre=0;}
     my $temp = 1 - $fre;
     $mfre = $temp > 0.9 ? 0.9 : $temp;
@@ -216,6 +223,7 @@ while (<IN>){
     my $leftbase = uc(substr($hashr{$a[0]},$a[1]-1-1,1)); 
     my $rightbase = uc(substr($hashr{$a[0]},$a[1]-1+1,1));
     my $midbase = uc(substr($hashr{$a[0]},$a[1]-1,1));    
+    if ($midbase eq "N"){next;}
     my $left = $leftbase.$midbase;                            
     my $right = $midbase.$rightbase;                          
     if ($left eq "AA" ) {$leftvalue = 1;}                     
@@ -233,7 +241,8 @@ while (<IN>){
     if ($left eq "GA" ) {$leftvalue = 13;}                    
     if ($left eq "GT" ) {$leftvalue = 14;}                    
     if ($left eq "GC" ) {$leftvalue = 15;}                    
-    if ($left eq "GG" ) {$leftvalue = 16;}                    
+    if ($left eq "GG" ) {$leftvalue = 16;}
+    if ($leftbase eq "N") {$leftvalue = 17;}
                                                               
     if ($right eq "AA" ) {$rightvalue = 1;}                   
     if ($right eq "AT" ) {$rightvalue = 2;}                   
@@ -250,7 +259,9 @@ while (<IN>){
     if ($right eq "GA" ) {$rightvalue = 13;}                  
     if ($right eq "GT" ) {$rightvalue = 14;}                  
     if ($right eq "GC" ) {$rightvalue = 15;}                  
-    if ($right eq "GG" ) {$rightvalue = 16;}  
+    if ($right eq "GG" ) {$rightvalue = 16;}
+    if ($rightbase eq "N" or $rightbase eq "") {$rightvalue = 17;}
+    
     if ($a[3] eq "A" and $a[12] eq "G") {$AG = 1;}
     elsif ($a[3] eq "T" and $a[12] eq "C"){$AG = 1;}
     else {$AG = 0;}
@@ -263,7 +274,7 @@ while (<IN>){
     my $Z = -(($c1)*$var_reads+($c2)*$fre+($c3)*$mfre+($c4)*$bqua+($c5)*$bino+($c6)*$ref_end+($c7)*$ref_mid+($c8)*$alt_end+($c9)*$end_c+($c10)*$alt_mid+($c11)*$end_p+($c12)*$endratio+($c13)*$ref_minus+($c14)*$ref_plus+($c15)*$alt_minus+($c16)*$alt_plus+($c17)*$sb_c+($c18)*$strandbias_p+($c19)*$strandbiasratio+($c20)*$homolen+($c21)*$sr+($c22)*$leftvalue+($c23)*$rightvalue+($c24)*$AG+($c25)*$alu+($c26)*$motif+($c27)*$snpvalue+($c28)*$highfre+($c29));
     my $result =  1/(1+2.718281828459**$Z);
     if ($result >= $p){
-        print OUT2 $_."\t".$result."\n";
+        print OUT2 $a[0]."\t".$a[1]."\t".$a[2]."\t".$a[3]."\t".$a[4]."\t".$a[12]."\t".$a[13]."\t".$result."\n";
     }
 }
 close IN;
